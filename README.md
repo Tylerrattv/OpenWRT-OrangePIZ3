@@ -1,6 +1,6 @@
 # Orange Pi Zero 3: OpenWrt with two Wi-Fi radios
 
-Manual GitHub Actions build for an Orange Pi Zero 3 (including the 1 GB model),
+GitHub Actions build for an Orange Pi Zero 3 (including the 1 GB model),
 using AW859A/UWE5622 onboard Wi-Fi and a MediaTek MT7921AU USB adapter.
 
 **Status: build files prepared; no Actions compilation or hardware test has been
@@ -15,7 +15,8 @@ boot, association, AP, and reboot testing on your board.
    Include the hidden `.github` folder; `build.yml` must end up at
    `.github/workflows/build.yml`, not inside another enclosing folder.
    Using Git to push the folder is the most reliable way to include hidden files.
-3. Open **Actions**, enable workflows if prompted, select **Build Orange Pi Zero 3**,
+3. Builds also start automatically when workflow, config, or script files change on main.
+   For a manual build, open **Actions**, enable workflows if prompted, select **Build Orange Pi Zero 3**,
    then **Run workflow**. No secrets or credentials are required.
 4. Wait for the job to finish. The first build can take several hours and is subject
    to your account's Actions limits. This workflow does not publish a release.

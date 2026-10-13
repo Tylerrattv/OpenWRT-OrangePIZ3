@@ -1,0 +1,30 @@
+name: Prepare private-config image template
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/preconfigure.yml', 'image-tools/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install image tools
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs
+      - name: Download the successful original build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' 'https://api.github.com/repos/Tylerrattv/OpenWRT-OrangePIZ3/actions/artifacts/11788357174/zip' -o original.zip
+          echo '0f16779d2b6b6b8a29528cfb97a9a5359c264399601fd71f332404f4973df8a8  original.zip' | sha256sum -c -
+      - name: Add and verify first-boot setup
+        run: python3 image-tools/repack.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zero3-firstboot-template
+          path: ready-template.img.gz
+          retention-days: 14

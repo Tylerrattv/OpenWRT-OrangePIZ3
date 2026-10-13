@@ -1,0 +1,101 @@
+#!/bin/sh
+# Ethernet changes are classified while the port is isolated from the AP bridge.
+# No local DHCP server, NAT, or concurrent wired/relayd forwarding is used.
+set -u
+relay_pid=''
+relay_key=''
+mode=''
+ONBOARD=$(uci -q get wireless.repeater_uplink.device) || exit 1
+
+stop_relay() {
+    if [ -n "$relay_pid" ]; then
+        kill "$relay_pid" 2>/dev/null || true
+        wait "$relay_pid" 2>/dev/null || true
+    fi
+    relay_pid=''
+    relay_key=''
+}
+isolate_port() {
+    ip link set dev eth0 nomaster 2>/dev/null || true
+    ip link set dev eth0 up 2>/dev/null || true
+}
+attach_port() {
+    ip link set dev eth0 master br-lan
+}
+probe_wired() {
+    rm -f /tmp/repeater-wired-offer
+    # Called only after eth0 has been removed from br-lan. Wireless offers cannot
+    # reach the probe; -s never assigns the probe lease to the port.
+    udhcpc -n -q -t 3 -T 3 -i eth0 -s /usr/lib/repeater-probe >/dev/null 2>&1 || true
+    [ -f /tmp/repeater-wired-offer ]
+}
+set_wired() {
+    stop_relay
+    ifdown wwan 2>/dev/null || true
+    if ! wifi down "$ONBOARD"; then
+    # Do not connect the Ethernet port if stopping the station failed.
+        logger -t repeater 'Station shutdown failed; keeping Ethernet isolated'
+        mode=isolated
+        return 1
+    fi
+    attach_port || return 1
+    ifup wired
+    mode=wired
+    echo wired > /tmp/repeater-mode
+    logger -t repeater 'Wired AP mode; management address comes from Peplink DHCP'
+}
+set_wireless() {
+    stop_relay
+    ifdown wired 2>/dev/null || true
+    wifi up "$ONBOARD"
+    ifup wwan
+    # Only classify failures as downstream after the isolated DHCP probe.
+    [ "$1" = downstream ] && attach_port
+    mode=wireless
+    echo wireless > /tmp/repeater-mode
+    logger -t repeater 'Wireless IPv4 relay mode; Peplink supplies client DHCP'
+}
+refresh_relay() {
+    local status up dev addr key
+    status=$(ubus call network.interface.wwan status 2>/dev/null) || { stop_relay; return; }
+    up=$(printf '%s' "$status" | jsonfilter -e '@.up')
+    dev=$(printf '%s' "$status" | jsonfilter -e '@.l3_device')
+    addr=$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address')
+    [ "$up" = true ] && [ -n "$dev" ] && [ -n "$addr" ] || { stop_relay; return; }
+    case "$addr" in 192.168.50.*) ;; *) stop_relay; return ;; esac
+    key="$dev:$addr"
+    if [ "$key" = "$relay_key" ] && [ -n "$relay_pid" ] && kill -0 "$relay_pid" 2>/dev/null; then
+        return
+    fi
+    stop_relay
+    /usr/sbin/relayd -I br-lan -I "$dev" -L "$addr" -B -D &
+    relay_pid=$!
+    relay_key="$key"
+}
+main() {
+    local last_carrier=unknown carrier
+    trap 'stop_relay; isolate_port; exit 0' INT TERM
+    isolate_port
+    # Wait for netifd and the AP bridge, with Ethernet held outside that bridge.
+    while [ ! -d /sys/class/net/br-lan ]; do sleep 1; done
+    while :; do
+        carrier=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo 0)
+        if [ "$carrier" != "$last_carrier" ]; then
+            stop_relay
+            isolate_port
+            ifdown wired 2>/dev/null || true
+            if [ "$carrier" = 1 ] && probe_wired; then
+                set_wired || true
+            elif [ "$carrier" = 1 ]; then
+                set_wireless downstream
+            else
+                set_wireless detached
+            fi
+            last_carrier="$carrier"
+        fi
+        [ "$mode" = wireless ] && refresh_relay
+        sleep 1
+    done
+}
+# Function-only loading is used by the build-time policy checks.
+[ "${1:-}" = --functions ] || main

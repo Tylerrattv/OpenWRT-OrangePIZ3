@@ -1,0 +1,15 @@
+#!/bin/sh
+# udhcpc hook: classify a wired lease without installing addresses or routes.
+case "$1" in
+    bound|renew)
+        case " ${router:-} " in
+            *' 192.168.50.1 '*)
+                [ "${subnet:-}" = 255.255.255.0 ] || exit 0
+                case "${ip:-}" in
+                    192.168.50.*) umask 077; : > /tmp/repeater-wired-offer ;;
+                esac
+                ;;
+        esac
+        ;;
+esac
+exit 0

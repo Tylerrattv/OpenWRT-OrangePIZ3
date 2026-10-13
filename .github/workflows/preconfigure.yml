@@ -14,17 +14,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install image tools
-        run: sudo apt-get update && sudo apt-get install -y e2fsprogs
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs qemu-user binutils zstd
       - name: Download the successful original build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           curl -fL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' 'https://api.github.com/repos/Tylerrattv/OpenWRT-OrangePIZ3/actions/artifacts/11788357174/zip' -o original.zip
           echo '0f16779d2b6b6b8a29528cfb97a9a5359c264399601fd71f332404f4973df8a8  original.zip' | sha256sum -c -
+      - name: Fetch and extract the official ARM relayd package
+        run: |
+          curl -fL 'https://downloads.openwrt.org/releases/25.12.0/targets/sunxi/cortexa53/openwrt-imagebuilder-25.12.0-sunxi-cortexa53.Linux-x86_64.tar.zst' -o imagebuilder.tar.zst
+          echo '6b975a0916f8564f1f27ee20eb48e33f70cedb1797524fba4b488ade458af4f5  imagebuilder.tar.zst' | sha256sum -c -
+          mkdir imagebuilder
+          tar --zstd -xf imagebuilder.tar.zst --strip-components=1 -C imagebuilder
+          curl -fL 'https://downloads.openwrt.org/releases/25.12.0/packages/aarch64_cortex-a53/base/relayd-2025.10.04~708a76fa-r1.apk' -o relayd.apk
+          echo '11b0a918926c8ae4229550bf51ec92591245eeeadc1c8c177e3dcdb07907e986  relayd.apk' | sha256sum -c -
+          mkdir relay-package
+          APK=$(find imagebuilder/staging_dir/host -type f -name apk -print -quit)
+          test -n "$APK"
+          "$APK" --allow-untrusted extract --destination relay-package relayd.apk
       - name: Add and verify first-boot setup
         run: python3 image-tools/repack.py
       - uses: actions/upload-artifact@v4
         with:
-          name: zero3-firstboot-template
+          name: zero3-auto-relay-template
           path: ready-template.img.gz
           retention-days: 14

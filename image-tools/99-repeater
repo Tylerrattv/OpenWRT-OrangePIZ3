@@ -41,6 +41,12 @@ while uci -q delete 'wireless.@wifi-iface[0]'; do :; done
 uci set "wireless.$ONBOARD.disabled=0"
 uci set "wireless.$ONBOARD.country=$COUNTRY"
 uci set "wireless.$ONBOARD.channel=auto"
+uci set "wireless.$ONBOARD.band=2g"
+uci set "wireless.$ONBOARD.htmode=HT20"
+uci -q delete "wireless.$ONBOARD.scan_list" || true
+for freq in 2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462 2467 2472; do
+    uci add_list "wireless.$ONBOARD.scan_list=$freq"
+done
 uci set "wireless.$USB.disabled=0"
 uci set "wireless.$USB.country=$COUNTRY"
 uci set "wireless.$USB.band=5g"
@@ -64,23 +70,61 @@ uci set "wireless.repeater_ap.key=$WIFI_KEY"
 uci set wireless.repeater_ap.disabled=0
 uci set network.wwan=interface
 uci set network.wwan.proto=dhcp
+uci set network.wwan.hostname=Parsons-Repeater
+uci set network.wwan.metric=20
+uci set network.wwan.ipv6=0
+# A port-free AP bridge: the controller alone attaches Ethernet after probing.
+for section in $(uci show network | sed -n 's/^network\.\([^=]*\)=device$/\1/p'); do
+    if [ "$(uci -q get "network.$section.name" || true)" = br-lan ]; then
+        uci delete "network.$section"
+        break
+    fi
+done
+uci set network.repeater_bridge=device
+uci set network.repeater_bridge.name=br-lan
+uci set network.repeater_bridge.type=bridge
+uci set network.repeater_bridge.bridge_empty=1
+uci set network.repeater_bridge.stp=1
+uci set network.repeater_bridge.forward_delay=15
+uci set "network.repeater_bridge.macaddr=$(cat /sys/class/net/eth0/address)"
 uci set network.lan.proto=static
-uci set network.lan.ipaddr=192.168.50.1
+uci set network.lan.device=br-lan
+uci set network.lan.ipaddr=192.168.51.1
 uci set network.lan.netmask=255.255.255.0
+uci -q delete network.lan.ip6assign || true
 uci -q delete network.lan.gateway || true
 uci -q delete network.lan.dns || true
-uci set dhcp.lan.ignore=0
+uci set network.wired=interface
+uci set network.wired.device=br-lan
+uci set network.wired.proto=dhcp
+uci set network.wired.auto=0
+uci set network.wired.hostname=Parsons-Repeater
+uci set network.wired.metric=10
+uci set network.wired.ipv6=0
+# Peplink supplies all client leases. Recovery uses a static PC address only.
+uci set dhcp.lan.ignore=1
+uci set dhcp.lan.ra=disabled
+uci set dhcp.lan.dhcpv6=disabled
+uci set dhcp.lan.ndp=disabled
 uci set dhcp.lan.interface=lan
 uci set dhcp.lan.start=100
 uci set dhcp.lan.limit=150
 uci set dhcp.lan.leasetime=12h
 uci -q del_list "firewall.$WAN_ZONE.network=wwan" || true
-uci add_list "firewall.$WAN_ZONE.network=wwan"
-uci set "firewall.$WAN_ZONE.masq=1"
-uci set "firewall.$WAN_ZONE.mtu_fix=1"
-uci set firewall.repeater_forward=forwarding
-uci set firewall.repeater_forward.src=lan
-uci set firewall.repeater_forward.dest=wan
+uci -q delete firewall.repeater_forward || true
+LAN_ZONE=''
+for zone in $(uci show firewall | sed -n 's/^firewall\.\([^=]*\)=zone$/\1/p'); do
+    [ "$(uci -q get "firewall.$zone.name" || true)" = lan ] && LAN_ZONE="$zone"
+done
+[ -n "$LAN_ZONE" ] || exit 1
+uci -q del_list "firewall.$LAN_ZONE.network=wwan" || true
+uci -q del_list "firewall.$LAN_ZONE.network=wired" || true
+uci add_list "firewall.$LAN_ZONE.network=wwan"
+uci add_list "firewall.$LAN_ZONE.network=wired"
+uci set "firewall.$LAN_ZONE.input=ACCEPT"
+uci set "firewall.$LAN_ZONE.output=ACCEPT"
+uci set "firewall.$LAN_ZONE.forward=ACCEPT"
+uci set "firewall.$LAN_ZONE.masq=0"
 uci commit wireless
 uci commit network
 uci commit dhcp
@@ -89,5 +133,6 @@ chmod 600 /etc/config/wireless
 umask 077
 awk -F: -v OFS=: -v hash="$ROOT_HASH" '$1 == "root" {$2=hash} {print}' /etc/shadow > /etc/shadow.repeater
 mv /etc/shadow.repeater /etc/shadow
-logger -t repeater 'First-boot repeater settings applied successfully'
+touch /etc/repeater-ready
+logger -t repeater 'Automatic wired AP / wireless relay configuration applied'
 exit 0
